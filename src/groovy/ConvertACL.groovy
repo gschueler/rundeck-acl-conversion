@@ -43,6 +43,7 @@ class ConvertACL{
             [allow('read','run')],// # allow read and run for all nodes
     ]
     static Map defaultApplicationContext=[
+        description:"application context",
         context:
             [application:'rundeck'],
         'for':
@@ -55,15 +56,15 @@ class ConvertACL{
         //automatically include application context in output document if true
         automaticApplicationContext:true,
         //define mapping from old Rundeck "mappedRoles", keyed by role, value is set of application roles
-        roleMapping:[:]
+        roleMapping:[:],
     ]
     public ConvertACL(File file){
         this.file=file
         this.acldata=[]
         final DumperOptions dumperOptions = new DumperOptions();
-        dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
+        //dumperOptions.setDefaultFlowStyle(DumperOptions.FlowStyle.BLOCK);
         yaml = new Yaml(dumperOptions);
-        defaultFor=defaultAllowRead
+        defaultFor=defaultAllowReadRun
     }
     public void convertTo(output){
         this.xml = new XmlParser().parse(file)
@@ -85,6 +86,9 @@ class ConvertACL{
     static Map allow(String...actions){
         [allow: Arrays.asList(actions)]
     }
+    private roleMappingForPrefix(String groupRole, String prefix){
+        options.roleMapping[groupRole]?.findAll{it.startsWith(prefix)}.collect{it.substring(prefix.size())}
+    }
     private void generate(){
         println "generate ${file}"
         def projectCtxs=[:]
@@ -96,26 +100,30 @@ class ConvertACL{
                 projectCtxs[map.context.project]=[group:new HashSet(),user:new HashSet()]
             }
 
-            map.by=[:]
+            def by=[:]
             def groupRole=null
             if(policy.by.group.size()>0){
-                map.by.group=policy.by.group.'@name'.text()
-                projectCtxs[map.context.project].group<<map.by.group
-                groupRole=map.by.group
+                by.group=policy.by.group.'@name'.text()
+                projectCtxs[map.context.project].group<<by.group
+                groupRole=by.group
             }else{
-                map.by.username=policy.by.user.'@name'.text()
-                projectCtxs[map.context.project].username<<map.by.user
+                by.username=policy.by.user.'@name'.text()
+                projectCtxs[map.context.project].username<<by.user
             }
 
             def jobs=[]
             map.'for'=new HashMap(this.defaultFor)
+            if(this.options.adhocDefault!=null){
+                map.'for'.adhoc=[[allow:this.options.adhocDefault]]
+            }
             //determine mapped role authorizations for jobs ("workflows")
-            def jobAuth=options.roleMapping[groupRole]?.findAll{it=~/^workflow_/}.collect{it.replaceAll(/^workflow_/,'')}
+            def jobAuth=roleMappingForPrefix(groupRole,'workflow_')
             //job authorizations
             policy.context.command.each{ auth->
                 def joballow=actions(auth.'@actions')
                 if(jobAuth && joballow!='*'){
                     joballow=new ArrayList(new HashSet([joballow].flatten()+jobAuth))
+                    joballow.remove('create')
                 }
                 def match=[match:[:],allow: joballow]
                 match.match.name=starToRegex(auth.'@job')
@@ -125,44 +133,92 @@ class ConvertACL{
 
             if(jobs){
                 map.'for'.job=jobs
+            }else if(jobAuth){
+                def joballow=new ArrayList(jobAuth)
+                joballow.remove('create')
+                map.'for'.job=[allow: joballow]
             }
 
+            //mapped roles for events_read, events_create, 
+            //equates to project level authorizations for resource kind 'event'
+            def evtauth=roleMappingForPrefix(groupRole,'events_')
+            if(evtauth){
+                map.'for'.resource=map.'for'.resource+[
+                    equals:[
+                        kind:'event',
+                    ],
+                    allow:evtauth
+                ]
+            }
+
+            //mapped roles for workflow_create/delete
+            //equates to project level 'create'/'delete' for resource kind 'job'
+            def projJobAuth=jobAuth.intersect(['delete','create'])
+            if(projJobAuth){
+                map.'for'.resource=map.'for'.resource+[
+                    equals:[
+                        kind:'job',
+                    ],
+                    allow:projJobAuth
+                ]
+            }
+
+            //mapped roles for resources_(read,create,update)
+            //equates to project level authorizations for resource kind 'node'
+            def resauth=roleMappingForPrefix(groupRole,'resources_')?.intersect(['read','create','update'])
+            if(resauth){
+                map.'for'.resource=map.'for'.resource+[
+                    equals:[
+                        kind:'node',
+                    ],
+                    allow:resauth
+                ]
+            }
+            
+            map.by=by
 
             acldata<<map
         }
         if(this.options.automaticApplicationContext){
             //add an application context to give access for the projects to the groups/users
             projectCtxs.each{project,ctxts->
-                def app=new HashMap(defaultApplicationContext)
-                app.'for'=new HashMap(app.'for') + [project:[
+                def app=defaultApplicationContext.clone()
+                def desc=""
+                if(ctxts.group){
+                    desc+="groups: "+ctxts.group.join(", ")
+                }
+                if(ctxts.username){
+                    desc+="users: "+ctxts.username.join(", ")
+                }
+                app.description="Generated context for access to project ${project} for ${desc}".toString()
+                app.'for'=new HashMap(app.'for') + [project:[[
                     match:[
                         name: project
                     ],
                     allow:[
                         'read'
                     ]
-                ]]
-                //user admin
-                if(options.roleMapping[groupRole]?.contains('user_admin')){
-                    app.'for'.resource<<[
-                        equals:[
-                            kind:'user',
-                        ],
-                        allow:'admin'
-                    ]
-                }
+                ]]]
                 def newctxts = [:]
-                def desc=""
                 if(ctxts.group){
                     newctxts.group=new ArrayList(ctxts.group)
-                    desc+="groups: "+ctxts.group.join(", ")
+                    //user admin
+                    newctxts.group.each{groupRole->
+                        if(roleMappingForPrefix(groupRole,'user_')?.contains('admin')){
+                            app.'for'.resource=app.'for'.resource + [
+                                equals:[
+                                    kind:'user',
+                                ],
+                                allow:'admin'
+                            ]
+                        }
+                    }
                 }
                 if(ctxts.username){
                     newctxts.username=new ArrayList(ctxts.username)
-                    desc+="users: "+ctxts.username.join(", ")
                 }
+
                 app.by=newctxts
-                app.description="Generated context for access to project ${project} for ${desc}".toString()
                 acldata<<app
             }
         }

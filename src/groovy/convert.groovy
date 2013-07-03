@@ -6,20 +6,37 @@
 
 
 if(args.size() < 2){
-    System.err.println("Usage: convert <outputdir> <xmlinputdir> [rundeck-config.properties]")
+    System.err.println("Usage: convert <outputdir> <xmlinputdir> [rundeck-config.properties] [options...]")
+    System.err.println("options include:")
+    System.err.println("\t-adhoc <defaults> : defaults is a comma-separated list of allowed authorization for adhoc")
     System.exit(1)
 }
 
 def outputdir = new File(args[0])
 def xmldir = new File(args[1])
 def configprops=null
-if(args.length>2){
+if(args.length>2 && args[2]!='-'){
     configprops=new Properties()
     new File(args[2]).withInputStream { 
         configprops.load(it)
     }
-    
 }
+
+def options=[:]
+def adhocAllow=[]
+if(args.length>3){
+    for(int i=3;i<args.length;i++){
+        switch(args[i]) {
+            case '-adhoc':
+                adhocAllow=args[i+1].split(',')
+            break
+        }
+    }
+    if(adhocAllow){
+        options.adhocDefault=adhocAllow
+    }
+}
+
 println "xmldir: ${xmldir.absolutePath}"
 def xmlfiles = xmldir.listFiles().findAll{(it.name=~/\.(aclpolicy)$/)}
 
@@ -51,6 +68,7 @@ mappedRoles.each{k,v->
 //return
 xmlfiles.each{file->
     def convert=new ConvertACL(file)
+    convert.options.putAll(options)
     convert.options.roleMapping=rolesMapped
     def outfile = new File(outputdir,file.name)
     convert.convertTo(outfile)
