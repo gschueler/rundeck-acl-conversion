@@ -1,0 +1,30 @@
+description: Administrative group that has access to execute all actions.
+context: {project: .*}
+for:
+  node:
+  - allow: [read, run]
+  resource:
+  - allow: [read]
+  - equals: {kind: job}
+    allow: [delete, create]
+  - equals: {kind: node}
+    allow: [create, update]
+  job:
+  - match: {name: .*, group: .*}
+    allow: '*'
+  adhoc:
+  - allow: [read, run]
+by: {group: admin}
+---
+description: 'Generated context for access to project .* for groups: admin'
+context: {application: rundeck}
+for:
+  project:
+  - match: {name: .*}
+    allow: [read]
+  resource:
+  - allow: [read]
+  - equals: {kind: user}
+    allow: admin
+by:
+  group: [admin]

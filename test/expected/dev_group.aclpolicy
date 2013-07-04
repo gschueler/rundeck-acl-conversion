@@ -1,0 +1,34 @@
+description: dev group that has access to certain jobs.
+context: {project: devproject}
+for:
+  node:
+  - allow: [read, run]
+  resource:
+  - allow: [read]
+  - equals: {kind: event}
+    allow: [update, delete, read, create]
+  - equals: {kind: job}
+    allow: [delete, create]
+  - equals: {kind: node}
+    allow: [read, create, update]
+  job:
+  - match: {name: Test.*, group: Dev Group 1}
+    allow: '*'
+  - match: {name: .*, group: Another dev Group}
+    allow: '*'
+  - match: {name: .*, group: Prod group}
+    allow: [update, delete, kill, read, run]
+  adhoc:
+  - allow: [read, run]
+by: {group: dev_group}
+---
+description: 'Generated context for access to project devproject for groups: dev_group'
+context: {application: rundeck}
+for:
+  project:
+  - match: {name: devproject}
+    allow: [read]
+  resource:
+  - allow: [read]
+by:
+  group: [dev_group]

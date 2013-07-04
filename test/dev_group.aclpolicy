@@ -1,0 +1,12 @@
+<policies>
+  <policy description="dev group that has access to certain jobs.">
+    <context project="devproject">
+      <command group="Dev Group 1" job="Test.*" actions="*"/>
+      <command group="Another dev Group" job="*" actions="*"/>
+      <command group="Prod group" job="*" actions="workflow_read,workflow_run"/>
+    </context>
+    <by>
+      <group name="dev_group"/>
+    </by>
+  </policy>
+</policies>
